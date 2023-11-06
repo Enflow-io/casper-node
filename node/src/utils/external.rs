@@ -43,12 +43,13 @@ pub static RESOURCES_PATH: Lazy<PathBuf> =
 /// An `External` also always provides a default, which will always result in an error when `load`
 /// is called. Should the underlying type `T` implement `Default`, the `with_default` can be
 /// used instead.
-#[derive(Clone, DataSize, Eq, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, DataSize, Eq, Debug, Deserialize, PartialEq, Serialize, Default)]
 #[serde(untagged)]
 pub enum External {
     /// Value that should be loaded from an external path.
     Path(PathBuf),
     /// The value has not been specified, but a default has been requested.
+    #[default]
     #[serde(skip)]
     Missing,
 }
@@ -93,19 +94,14 @@ pub trait Loadable: Sized {
     /// Load a test-only instance from the local path.
     #[cfg(test)]
     fn from_resources<P: AsRef<Path>>(rel_path: P) -> Self {
-        Self::from_path(RESOURCES_PATH.join(rel_path.as_ref())).unwrap_or_else(|error| {
+        let full_path = RESOURCES_PATH.join(rel_path.as_ref());
+        Self::from_path(&full_path).unwrap_or_else(|error| {
             panic!(
                 "could not load resources from {}: {}",
-                rel_path.as_ref().display(),
+                full_path.display(),
                 error
             )
         })
-    }
-}
-
-impl Default for External {
-    fn default() -> Self {
-        External::Missing
     }
 }
 

@@ -1,19 +1,20 @@
 use std::{
     fmt::{self, Debug, Display, Formatter},
-    io, mem,
+    mem,
     net::SocketAddr,
-    sync::Arc,
 };
 
 use derive_more::From;
-use futures::stream::{SplitSink, SplitStream};
 use serde::Serialize;
 use static_assertions::const_assert;
 use tracing::Span;
 
 use casper_types::PublicKey;
 
-use super::{error::ConnectionError, FullTransport, GossipedAddress, Message, NodeId};
+use super::{
+    error::{ConnectionError, MessageReceiverError},
+    GossipedAddress, Message, NodeId, Ticket, Transport,
+};
 use crate::{
     effect::{
         announcements::PeerBehaviorAnnouncement,
@@ -27,12 +28,16 @@ const_assert!(_NETWORK_EVENT_SIZE < 65);
 
 /// A network event.
 #[derive(Debug, From, Serialize)]
-pub(crate) enum Event<P> {
+pub(crate) enum Event<P>
+where
+    // Note: See notes on the `OutgoingConnection`'s `P: Serialize` trait bound for details.
+    P: Serialize,
+{
     Initialize,
 
     /// The TLS handshake completed on the incoming connection.
     IncomingConnection {
-        incoming: Box<IncomingConnection<P>>,
+        incoming: Box<IncomingConnection>,
         #[serde(skip)]
         span: Span,
     },
@@ -43,21 +48,25 @@ pub(crate) enum Event<P> {
         msg: Box<Message<P>>,
         #[serde(skip)]
         span: Span,
+        /// The backpressure-related ticket for the message.
+        #[serde(skip)]
+        ticket: Ticket,
     },
 
     /// Incoming connection closed.
     IncomingClosed {
         #[serde(skip_serializing)]
-        result: io::Result<()>,
+        result: Result<(), Box<MessageReceiverError>>,
         peer_id: Box<NodeId>,
         peer_addr: SocketAddr,
+        peer_consensus_public_key: Option<Box<PublicKey>>,
         #[serde(skip_serializing)]
         span: Box<Span>,
     },
 
     /// A new outgoing connection was successfully established.
     OutgoingConnection {
-        outgoing: Box<OutgoingConnection<P>>,
+        outgoing: Box<OutgoingConnection>,
         #[serde(skip_serializing)]
         span: Span,
     },
@@ -108,7 +117,10 @@ impl From<NetworkInfoRequest> for Event<ProtocolMessage> {
     }
 }
 
-impl<P: Display> Display for Event<P> {
+impl<P> Display for Event<P>
+where
+    P: Display + Serialize,
+{
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Event::Initialize => write!(f, "initialize"),
@@ -119,6 +131,7 @@ impl<P: Display> Display for Event<P> {
                 peer_id: node_id,
                 msg,
                 span: _,
+                ticket: _,
             } => write!(f, "msg from {}: {}", node_id, msg),
             Event::IncomingClosed { peer_addr, .. } => {
                 write!(f, "closed connection from {}", peer_addr)
@@ -146,8 +159,10 @@ impl<P: Display> Display for Event<P> {
 }
 
 /// Outcome of an incoming connection negotiation.
+// Note: `IncomingConnection` is typically used boxed anyway, so a larget variant is not an issue.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Serialize)]
-pub(crate) enum IncomingConnection<P> {
+pub(crate) enum IncomingConnection {
     /// The connection failed early on, before even a peer's [`NodeId`] could be determined.
     FailedEarly {
         /// Remote port the peer dialed us from.
@@ -175,14 +190,14 @@ pub(crate) enum IncomingConnection<P> {
         /// Peer's [`NodeId`].
         peer_id: NodeId,
         /// The public key the peer is validating with, if any.
-        peer_consensus_public_key: Option<PublicKey>,
+        peer_consensus_public_key: Option<Box<PublicKey>>,
         /// Stream of incoming messages. for incoming connections.
         #[serde(skip_serializing)]
-        stream: SplitStream<FullTransport<P>>,
+        transport: Transport,
     },
 }
 
-impl<P> Display for IncomingConnection<P> {
+impl Display for IncomingConnection {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             IncomingConnection::FailedEarly { peer_addr, error } => {
@@ -199,7 +214,7 @@ impl<P> Display for IncomingConnection<P> {
                 public_addr,
                 peer_id,
                 peer_consensus_public_key,
-                stream: _,
+                transport: _,
             } => {
                 write!(
                     f,
@@ -219,7 +234,7 @@ impl<P> Display for IncomingConnection<P> {
 
 /// Outcome of an outgoing connection attempt.
 #[derive(Debug, Serialize)]
-pub(crate) enum OutgoingConnection<P> {
+pub(crate) enum OutgoingConnection {
     /// The outgoing connection failed early on, before a peer's [`NodeId`] could be determined.
     FailedEarly {
         /// Address that was dialed.
@@ -245,16 +260,14 @@ pub(crate) enum OutgoingConnection<P> {
         /// Peer's [`NodeId`].
         peer_id: NodeId,
         /// The public key the peer is validating with, if any.
-        peer_consensus_public_key: Option<PublicKey>,
+        peer_consensus_public_key: Option<Box<PublicKey>>,
         /// Sink for outgoing messages.
-        #[serde(skip_serializing)]
-        sink: SplitSink<FullTransport<P>, Arc<Message<P>>>,
-        /// Holds the information whether the remote node is syncing.
-        is_syncing: bool,
+        #[serde(skip)]
+        transport: Transport,
     },
 }
 
-impl<P> Display for OutgoingConnection<P> {
+impl Display for OutgoingConnection {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             OutgoingConnection::FailedEarly { peer_addr, error } => {
@@ -270,14 +283,9 @@ impl<P> Display for OutgoingConnection<P> {
                 peer_addr,
                 peer_id,
                 peer_consensus_public_key,
-                sink: _,
-                is_syncing,
+                transport: _,
             } => {
-                write!(
-                    f,
-                    "connection established to {}/{}, is_syncing: {}",
-                    peer_addr, peer_id, is_syncing
-                )?;
+                write!(f, "connection established to {}/{}", peer_addr, peer_id,)?;
 
                 if let Some(public_key) = peer_consensus_public_key {
                     write!(f, " [{}]", public_key)

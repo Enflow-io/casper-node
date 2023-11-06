@@ -6,8 +6,6 @@ use casper_types::{ProtocolVersion, TimeDiff};
 use datasize::DataSize;
 use serde::{Deserialize, Serialize};
 
-use super::EstimatorWeights;
-
 /// Default binding address.
 ///
 /// Uses a fixed port per node, but binds on any interface.
@@ -38,6 +36,7 @@ impl Default for Config {
             bind_address: DEFAULT_BIND_ADDRESS.to_string(),
             public_address: DEFAULT_PUBLIC_ADDRESS.to_string(),
             known_addresses: Vec::new(),
+            keylog_path: None,
             min_peers_for_initialization: DEFAULT_MIN_PEERS_FOR_INITIALIZATION,
             gossip_interval: DEFAULT_GOSSIP_INTERVAL,
             initial_gossip_delay: DEFAULT_INITIAL_GOSSIP_DELAY,
@@ -46,11 +45,11 @@ impl Default for Config {
             max_incoming_peer_connections: 0,
             max_outgoing_byte_rate_non_validators: 0,
             max_incoming_message_rate_non_validators: 0,
-            estimator_weights: Default::default(),
             tarpit_version_threshold: None,
             tarpit_duration: TimeDiff::from_seconds(600),
             tarpit_chance: 0.2,
             max_in_flight_demands: 50,
+            ack_timeout: TimeDiff::from_seconds(30),
             blocklist_retain_duration: TimeDiff::from_seconds(600),
             identity: None,
         }
@@ -83,6 +82,8 @@ pub struct Config {
     pub public_address: String,
     /// Known address of a node on the network used for joining.
     pub known_addresses: Vec<String>,
+    /// If set, logs all TLS keys to this file.
+    pub keylog_path: Option<String>,
     /// Minimum number of fully-connected peers to consider component initialized.
     pub min_peers_for_initialization: u16,
     /// Interval in milliseconds used for gossiping.
@@ -99,8 +100,6 @@ pub struct Config {
     pub max_outgoing_byte_rate_non_validators: u32,
     /// Maximum of requests answered from non-validating peers. Unlimited if 0.
     pub max_incoming_message_rate_non_validators: u32,
-    /// Weight distribution for the payload impact estimator.
-    pub estimator_weights: EstimatorWeights,
     /// The protocol version at which (or under) tarpitting is enabled.
     pub tarpit_version_threshold: Option<ProtocolVersion>,
     /// If tarpitting is enabled, duration for which connections should be kept open.
@@ -108,7 +107,9 @@ pub struct Config {
     /// The chance, expressed as a number between 0.0 and 1.0, of triggering the tarpit.
     pub tarpit_chance: f32,
     /// Maximum number of demands for objects that can be in-flight.
-    pub max_in_flight_demands: u32,
+    pub max_in_flight_demands: u16,
+    /// Timeout for completing handling of a message before closing a connection to a peer.
+    pub ack_timeout: TimeDiff,
     /// Duration peers are kept on the block list, before being redeemed.
     pub blocklist_retain_duration: TimeDiff,
     /// Network identity configuration option.

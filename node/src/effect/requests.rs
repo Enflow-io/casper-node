@@ -97,12 +97,9 @@ pub(crate) enum NetworkRequest<P> {
         dest: Box<NodeId>,
         /// Message payload.
         payload: Box<P>,
-        /// If `true`, the responder will be called early after the message has been queued, not
-        /// waiting until it has passed to the kernel.
-        respond_after_queueing: bool,
         /// Responder to be called when the message has been *buffered for sending*.
         #[serde(skip_serializing)]
-        auto_closing_responder: AutoClosingResponder<()>,
+        message_queued_responder: Option<AutoClosingResponder<()>>,
     },
     /// Send a message on the network to validator peers in the given era.
     ValidatorBroadcast {
@@ -143,13 +140,11 @@ impl<P> NetworkRequest<P> {
             NetworkRequest::SendMessage {
                 dest,
                 payload,
-                respond_after_queueing,
-                auto_closing_responder,
+                message_queued_responder,
             } => NetworkRequest::SendMessage {
                 dest,
                 payload: Box::new(wrap_payload(*payload)),
-                respond_after_queueing,
-                auto_closing_responder,
+                message_queued_responder,
             },
             NetworkRequest::ValidatorBroadcast {
                 payload,
@@ -205,6 +200,7 @@ pub(crate) enum NetworkInfoRequest {
     },
     /// Get up to `count` fully-connected peers in random order.
     FullyConnectedPeers {
+        /// Responder to be called with all connected in random order peers.
         count: usize,
         /// Responder to be called with the peers.
         responder: Responder<Vec<NodeId>>,

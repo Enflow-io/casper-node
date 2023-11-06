@@ -14,6 +14,11 @@ All notable changes to this project will be documented in this file.  The format
 ## Unreleased
 
 ### Added
+* The network handshake now contains the hash of the chainspec used and will be successful only if they match.
+* Add an `identity` option to load existing network identity certificates signed by a CA.
+* TLS connection keys can now be logged using the `network.keylog_location` setting (similar to `SSLKEYLOGFILE` envvar found in other applications).
+* Add a `lock_status` field to the JSON representation of the `ContractPackage` values.
+* Unit tests can be run with JSON log output by setting a `NODE_TEST_LOG=json` environment variable.
 * New environment variable `CL_EVENT_QUEUE_DUMP_THRESHOLD` to enable dumping of queue event counts to log when a certain threshold is exceeded.
 * Add initial support for private chain. 
 * Add support for CA signed client certificates for private chain.
@@ -21,6 +26,8 @@ All notable changes to this project will be documented in this file.  The format
 
 ### Changed
 * The `state_identifier` parameter of the `query_global_state` JSON-RPC method is now optional. If no `state_identifier` is specified, the highest complete block known to the node will be used to fulfill the request.
+* The underlying network protocol has been changed, now supports multiplexing for better latency and proper backpressuring across nodes.
+* Any metrics containing queue names "network_low_priority" and "network_incoming" have had said portion renamed to "message_low_priority" and "message_incoming".
 * `state_get_account_info` RPC handler can now handle an `AccountIdentifier` as a parameter.
 * Replace the `sync_to_genesis` node config field with `sync_handling`.
   * The new `sync_handling` field accepts three values:
@@ -36,7 +43,8 @@ All notable changes to this project will be documented in this file.  The format
 ### Security
 * Update `openssl` to version 0.10.55 as mitigation for [RUSTSEC-2023-0044](https://rustsec.org/advisories/RUSTSEC-2023-0044).
 
-
+### Removed
+* There is no more weighted rate limiting on incoming traffic, instead the nodes dynamically adjusts allowed rates from peers based on available resources. This resulted in the removal of the `estimator_weights` configuration option and the `accumulated_incoming_limiter_delay` metric.
 
 ## 1.5.3
 

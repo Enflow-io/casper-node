@@ -27,8 +27,6 @@ use tracing::{debug, error, info, warn};
 
 use casper_types::{EraId, PublicKey, TimeDiff, Timestamp, U512};
 
-#[cfg(test)]
-use crate::testing::network::NetworkedReactor;
 use crate::{
     components::{
         block_accumulator::{self, BlockAccumulator},
@@ -51,6 +49,7 @@ use crate::{
         upgrade_watcher::{self, UpgradeWatcher},
         Component, ValidatorBoundComponent,
     },
+    dead_metrics::DeadMetrics,
     effect::{
         announcements::{
             BlockAccumulatorAnnouncement, ConsensusAnnouncement, ContractRuntimeAnnouncement,
@@ -77,6 +76,11 @@ use crate::{
     },
     utils::{Source, WithDir},
     NodeRng,
+};
+#[cfg(test)]
+use crate::{
+    components::{ComponentState, InitializedComponent},
+    testing::network::NetworkedReactor,
 };
 pub use config::Config;
 pub(crate) use error::Error;
@@ -170,6 +174,9 @@ pub(crate) struct MainReactor {
     memory_metrics: MemoryMetrics,
     #[data_size(skip)]
     event_queue_metrics: EventQueueMetrics,
+    #[data_size(skip)]
+    #[allow(dead_code)]
+    dead_metrics: DeadMetrics,
 
     //   ambient settings / data / load-bearing config
     validator_matrix: ValidatorMatrix,
@@ -377,9 +384,11 @@ impl reactor::Reactor for MainReactor {
                 self.storage
                     .handle_event(effect_builder, rng, incoming.into()),
             ),
-            MainEvent::NetworkPeerProvidingData(NetResponseIncoming { sender, message }) => {
-                reactor::handle_get_response(self, effect_builder, rng, sender, message)
-            }
+            MainEvent::NetworkPeerProvidingData(NetResponseIncoming {
+                sender,
+                message,
+                ticket: _, // TODO: Properly handle ticket.
+            }) => reactor::handle_get_response(self, effect_builder, rng, sender, message),
             MainEvent::AddressGossiper(event) => reactor::wrap_effects(
                 MainEvent::AddressGossiper,
                 self.address_gossiper
@@ -855,15 +864,17 @@ impl reactor::Reactor for MainReactor {
                 self.contract_runtime
                     .handle_event(effect_builder, rng, demand.into()),
             ),
-            MainEvent::TrieResponseIncoming(TrieResponseIncoming { sender, message }) => {
-                reactor::handle_fetch_response::<Self, TrieOrChunk>(
-                    self,
-                    effect_builder,
-                    rng,
-                    sender,
-                    &message.0,
-                )
-            }
+            MainEvent::TrieResponseIncoming(TrieResponseIncoming {
+                sender,
+                message,
+                ticket: _, // TODO: Sensibly process ticket.
+            }) => reactor::handle_fetch_response::<Self, TrieOrChunk>(
+                self,
+                effect_builder,
+                rng,
+                sender,
+                &message.0,
+            ),
 
             // STORAGE
             MainEvent::Storage(event) => reactor::wrap_effects(
@@ -998,6 +1009,7 @@ impl reactor::Reactor for MainReactor {
         let metrics = Metrics::new(registry.clone());
         let memory_metrics = MemoryMetrics::new(registry.clone())?;
         let event_queue_metrics = EventQueueMetrics::new(registry.clone(), event_queue)?;
+        let dead_metrics = DeadMetrics::new(registry)?;
 
         let protocol_version = chainspec.protocol_config.version;
 
@@ -1185,6 +1197,7 @@ impl reactor::Reactor for MainReactor {
             metrics,
             memory_metrics,
             event_queue_metrics,
+            dead_metrics,
 
             state: ReactorState::Initialize {},
             attempts: 0,
@@ -1212,6 +1225,27 @@ impl reactor::Reactor for MainReactor {
         self.event_queue_metrics
             .record_event_queue_counts(&event_queue_handle)
     }
+
+    #[cfg(test)]
+    fn get_component_state(&self, name: &str) -> Option<&ComponentState> {
+        match name {
+            "diagnostics_port" => Some(
+                <DiagnosticsPort as InitializedComponent<MainEvent>>::state(&self.diagnostics_port),
+            ),
+            "event_stream_server" => Some(
+                <EventStreamServer as InitializedComponent<MainEvent>>::state(
+                    &self.event_stream_server,
+                ),
+            ),
+            "rest_server" => Some(<RestServer as InitializedComponent<MainEvent>>::state(
+                &self.rest_server,
+            )),
+            "rpc_server" => Some(<RpcServer as InitializedComponent<MainEvent>>::state(
+                &self.rpc_server,
+            )),
+            _ => None,
+        }
+    }
 }
 
 impl MainReactor {
@@ -1235,6 +1269,10 @@ impl MainReactor {
             MainEvent::BlockSynchronizer,
             self.block_synchronizer
                 .handle_validators(effect_builder, rng),
+        ));
+        effects.extend(reactor::wrap_effects(
+            MainEvent::Network,
+            self.net.handle_validators(effect_builder, rng),
         ));
         effects
     }

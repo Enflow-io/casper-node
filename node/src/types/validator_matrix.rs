@@ -217,10 +217,6 @@ impl ValidatorMatrix {
         self.finality_threshold_fraction
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.read_inner().is_empty()
-    }
-
     /// Returns whether `pub_key` is the ID of a validator in this era, or `None` if the validator
     /// information for that era is missing.
     pub(crate) fn is_validator_in_era(
@@ -251,6 +247,9 @@ impl ValidatorMatrix {
     }
 
     /// Determine if the active validator is in a current or upcoming set of active validators.
+    ///
+    /// The set is not guaranteed to be minimal, as it will include validators up to `auction_delay
+    /// + 1` back eras from the highest era known.
     #[inline]
     pub(crate) fn is_active_or_upcoming_validator(&self, public_key: &PublicKey) -> bool {
         // This function is potentially expensive and could be memoized, with the cache being
@@ -260,6 +259,21 @@ impl ValidatorMatrix {
             .rev()
             .take(self.auction_delay as usize + 1)
             .any(|validator_weights| validator_weights.is_validator(public_key))
+    }
+
+    /// Return the set of active or upcoming validators.
+    ///
+    /// The set is not guaranteed to be minimal, as it will include validators up to `auction_delay
+    /// + 1` back eras from the highest era known.
+    #[inline]
+    pub(crate) fn active_or_upcoming_validators(&self) -> HashSet<PublicKey> {
+        self.read_inner()
+            .values()
+            .rev()
+            .take(self.auction_delay as usize + 1)
+            .flat_map(|validator_weights| validator_weights.validator_public_keys())
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn create_finality_signature(
@@ -543,7 +557,6 @@ mod tests {
         let mut era_validator_weights = vec![validator_matrix.validator_weights(0.into()).unwrap()];
         era_validator_weights.extend(
             (1..MAX_VALIDATOR_MATRIX_ENTRIES as u64)
-                .into_iter()
                 .map(EraId::from)
                 .map(empty_era_validator_weights),
         );
@@ -636,7 +649,6 @@ mod tests {
         let mut era_validator_weights = vec![validator_matrix.validator_weights(0.into()).unwrap()];
         era_validator_weights.extend(
             (1..=MAX_VALIDATOR_MATRIX_ENTRIES as u64)
-                .into_iter()
                 .map(EraId::from)
                 .map(empty_era_validator_weights),
         );
@@ -653,12 +665,7 @@ mod tests {
         }
 
         // Register eras [7, 8, 9].
-        era_validator_weights.extend(
-            (7..=9)
-                .into_iter()
-                .map(EraId::from)
-                .map(empty_era_validator_weights),
-        );
+        era_validator_weights.extend((7..=9).map(EraId::from).map(empty_era_validator_weights));
         for evw in era_validator_weights.iter().rev().take(3).cloned() {
             assert!(
                 validator_matrix.register_era_validator_weights(evw),

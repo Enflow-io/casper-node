@@ -6,7 +6,7 @@ use std::{
 };
 
 /// Representation of a single operation during execution.
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, Default)]
 pub enum Op {
     /// Read value from a `Key`.
     Read,
@@ -14,7 +14,10 @@ pub enum Op {
     Write,
     /// Add a value into a `Key`.
     Add,
+    /// Prune a value under a `Key`.
+    Prune,
     /// No operation.
+    #[default]
     NoOp,
 }
 
@@ -44,12 +47,6 @@ impl Display for Op {
     }
 }
 
-impl Default for Op {
-    fn default() -> Self {
-        Op::NoOp
-    }
-}
-
 impl From<&Op> for casper_types::OpKind {
     fn from(op: &Op) -> Self {
         match op {
@@ -57,6 +54,7 @@ impl From<&Op> for casper_types::OpKind {
             Op::Write => casper_types::OpKind::Write,
             Op::Add => casper_types::OpKind::Add,
             Op::NoOp => casper_types::OpKind::NoOp,
+            Op::Prune => casper_types::OpKind::Delete,
         }
     }
 }

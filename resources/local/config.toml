@@ -178,6 +178,15 @@ bind_address = '0.0.0.0:34553'
 # one connection.
 known_addresses = ['127.0.0.1:34553']
 
+# TLS keylog location
+#
+# If set, the node will write all keys generated during all TLS connections to the given file path.
+# This option is intended for debugging only, do NOT enable this on production systems.
+#
+# The specified location will be appended to, even across node restarts, so it may grow large if
+# unattended.
+# keylog_path = "/path/to/keylog"
+
 # Minimum number of fully-connected peers to consider network component initialized.
 min_peers_for_initialization = 3
 
@@ -211,6 +220,10 @@ max_incoming_message_rate_non_validators = 0
 # Maximum number of requests for data from a single peer that are allowed be buffered. A value of
 # `0` means unlimited.
 max_in_flight_demands = 50
+
+# Timeout before giving up on a peer. If a peer exceeds this time limit for acknowledging or
+# responding to a received message, it is considered unresponsive and the connection severed.
+ack_timeout = '30sec'
 
 # Version threshold to enable tarpit for.
 #
@@ -246,44 +259,6 @@ blocklist_retain_duration = '1 minute'
 # secret_key = "local_node.pem"
 # ca_certificate = "ca_cert.pem"
 
-# Weights for impact estimation of incoming messages, used in combination with
-# `max_incoming_message_rate_non_validators`.
-#
-# Any weight set to 0 means that the category of traffic is exempt from throttling.
-[network.estimator_weights]
-consensus = 0
-block_gossip = 1
-deploy_gossip = 0
-finality_signature_gossip = 1
-address_gossip = 0
-finality_signature_broadcasts = 0
-deploy_requests = 1
-deploy_responses = 0
-legacy_deploy_requests = 1
-legacy_deploy_responses = 0
-block_requests = 1
-block_responses = 0
-block_header_requests = 1
-block_header_responses = 0
-trie_requests = 1
-trie_responses = 0
-finality_signature_requests = 1
-finality_signature_responses = 0
-sync_leap_requests = 1
-sync_leap_responses = 0
-approvals_hashes_requests = 1
-approvals_hashes_responses = 0
-execution_results_requests = 1
-execution_results_responses = 0
-
-# Identity of a node
-#
-# When this section is not specified, an identity will be generated when the node process starts with a self-signed certifcate.
-# This option makes sense for some private chains where for security reasons joining new nodes is restricted.
-# [network.identity]
-# tls_certificate = "local_node_cert.pem"
-# secret_key = "local_node.pem"
-# ca_certificate = "ca_cert.pem"
 
 # ==================================================
 # Configuration options for the JSON-RPC HTTP server
